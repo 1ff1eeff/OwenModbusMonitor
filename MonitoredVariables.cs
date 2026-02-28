@@ -8,6 +8,7 @@ namespace OwenModbusMonitor
     public class MonitoredFloat
     {
         private float _value;
+        public bool HasValue { get; private set; } = false;
 
         // Событие, которое срабатывает при изменении значения
         public event EventHandler<float>? ValueChanged;
@@ -18,8 +19,10 @@ namespace OwenModbusMonitor
             set
             {
                 // Проверка на изменение с учетом погрешности float, чтобы не спамить событиями
-                if (Math.Abs(_value - value) > 0.0001f)
+                // Также обновляем, если это первое присвоение (!HasValue)
+                if (!HasValue || Math.Abs(_value - value) > 0.0001f)
                 {
+                    HasValue = true;
                     _value = value;
                     ValueChanged?.Invoke(this, _value);
                 }

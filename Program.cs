@@ -1,31 +1,49 @@
-﻿using OwenModbusMonitor;
+﻿using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using OwenModbusMonitor;
 using System;
+using System.IO;
 
-Console.WriteLine("Запуск мониторинга устройства ПР-103...");
+// Создаем папку wwwroot, если она отсутствует, чтобы избежать ошибки WebRootPath
+Directory.CreateDirectory("wwwroot");
 
-string ipAddress = "127.0.0.1";
-int port = 502;
+var builder = WebApplication.CreateBuilder(args);
 
-// Создаем контроллер. Using гарантирует вызов Dispose (и Disconnect) при завершении.
-using var controller = new DeviceController(ipAddress, port);
+// Настраиваем прослушивание порта 5000
+builder.WebHost.ConfigureKestrel(options => options.ListenAnyIP(5000));
 
-try
+// Регистрируем DeviceController как Singleton сервис
+builder.Services.AddSingleton<DeviceController>(sp =>
 {
+    var controller = new DeviceController("127.0.0.1", 502);
     controller.Connect();
-    Console.WriteLine($"Успешное подключение к {ipAddress}:{port}");
-
-    // Подписка на изменение значения давления (регистр 16388, свойство Davlenie)
-    controller.Davlenie.ValueChanged += (s, value) =>
-    {
-        // \r возвращает курсор в начало строки, а Write (без Line) не создает новую строку
-        Console.Write($"\r[{DateTime.Now:T}] Давление: {value:F2}   ");
-    };
-
     controller.StartMonitoring();
-    Console.WriteLine("Мониторинг запущен. Нажмите Enter для выхода.");
-    Console.ReadLine();
-}
-catch (Exception ex)
+    return controller;
+});
+
+var app = builder.Build();
+
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
+app.MapGet("/api/data", (DeviceController device) =>
 {
-    Console.WriteLine($"Критическая ошибка: {ex.Message}");
-}
+    return new
+    {
+        pressure = device.Davlenie.HasValue ? device.Davlenie.CurrentValue : (float?)null,
+        setpoint = device.Ustavka.HasValue ? device.Ustavka.CurrentValue : (float?)null,
+        timestamp = DateTime.Now
+    };
+});
+
+// Эндпоинты для управления опросом
+app.MapPost("/api/start", (DeviceController device) => device.StartMonitoring());
+app.MapPost("/api/stop", (DeviceController device) => device.StopMonitoring());
+app.MapPost("/api/setpoint", async (DeviceController device, SetpointRequest req) => await device.WriteUstavkaAsync(req.Value));
+
+Console.WriteLine("Веб-сервер запущен: http://localhost:5000");
+app.Run();
+
+record SetpointRequest(float Value);
