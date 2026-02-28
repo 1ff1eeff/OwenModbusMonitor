@@ -16,33 +16,121 @@
         button { padding: 10px 20px; font-size: 1em; border: none; border-radius: 4px; cursor: pointer; color: white; margin: 0 5px; }
         .btn-start { background-color: #2ecc71; }
         .btn-stop { background-color: #e74c3c; }
+        .btn-reset { background-color: #f39c12; }
+        .btn-log { background-color: #34495e; }
+        @keyframes flash-red { 0% { background-color: #f4f4f9; } 50% { background-color: #ffcccc; } 100% { background-color: #f4f4f9; } }
+        .alarm-bg { animation: flash-red 1s infinite; }
+        .error-list { margin-top: 20px; }
+        .error-item { background-color: #f8d7da; color: #721c24; padding: 10px; margin-bottom: 5px; border: 1px solid #f5c6cb; border-radius: 4px; font-weight: bold; }
+        .new-log { animation: flash-log 3s ease-out; border-radius: 2px; }
+        @keyframes flash-log { 0% { background-color: #e67e22; } 100% { background-color: transparent; } }
+        @keyframes flash-button { 0% { background-color: #34495e; } 50% { background-color: #e67e22; } 100% { background-color: #34495e; } }
+        .btn-flash { animation: flash-button 1s infinite; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="sensor-card">
             <h2>Датчик Давления</h2>
+            <div id="statusBadge" style="display: inline-block; padding: 5px 10px; border-radius: 15px; background: #95a5a6; color: white; font-weight: bold; margin-bottom: 10px;">--</div>
             <div class="value-display">
                 <span id="pressureValue">--</span>
                 <span class="unit">бар</span>
             </div>
+            <div style="margin-top: 10px; font-size: 1.2em; color: #27ae60; font-weight: bold;">
+                Годных: <span id="goodCount">0</span>
+            </div>
+            <div style="margin-top: 5px; font-size: 1.2em; color: #c0392b; font-weight: bold;">
+                Брак: <span id="failCount">0</span>
+            </div>
         </div>
         <canvas id="pressureChart"></canvas>
         <div class="controls">
-            <button class="btn-start" onclick="startMonitoring()">Старт</button>
-            <button class="btn-stop" onclick="stopMonitoring()">Стоп</button>
             <div style="margin-top: 15px; border-top: 1px solid #eee; padding-top: 15px;">
                 <label>Уставка:</label>
                 <input type="number" id="setpointInput" step="0.1" style="padding: 5px; width: 80px; border: 1px solid #ccc; border-radius: 4px;">
+                <select onchange="document.getElementById('setpointInput').value = this.value" style="padding: 5px; border: 1px solid #ccc; border-radius: 4px;">
+                    <option value="">Выбрать...</option>
+                    <option value="6.3">6.3</option>
+                    <option value="16">16</option>
+                    <option value="35">35</option>
+                    <option value="50">50</option>
+                </select>
                 <button onclick="sendSetpoint()" style="background-color: #3498db;">Задать</button>
                 <span style="font-size: 0.9em; color: #555; margin-left: 10px;">Текущая: <span id="currentSetpoint">--</span></span>
             </div>
+            <div style="margin-top: 10px;">
+                <button class="btn-start" onclick="startMonitoring()">Старт</button>
+                <button class="btn-stop" onclick="stopMonitoring()">Стоп</button>
+                <button class="btn-reset" onclick="resetSystem()">Сброс</button>
+                <button id="btnLog" class="btn-log" onclick="toggleLogs()">Журнал</button>
+            </div>
+        </div>
+        <div id="errorList" class="error-list"></div>
+        
+        <!-- Контейнер журнала с пагинацией -->
+        <div id="logContainer" style="display:none; margin-top: 20px; background: #2c3e50; color: #ecf0f1; padding: 15px; border-radius: 4px; text-align: left;">
+            <div style="margin-bottom: 10px; border-bottom: 1px solid #7f8c8d; padding-bottom: 5px; display: flex; justify-content: space-between; align-items: center; font-size: 0.9em;">
+                <div>
+                    <span>Всего: <span id="logTotal">0</span></span>
+                    <select id="pageSizeSelect" onchange="changePageSize()" style="margin-left: 10px; padding: 2px; background: #34495e; color: white; border: 1px solid #7f8c8d; border-radius: 3px;">
+                        <option value="20">20</option>
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                    </select>
+                    <select id="sortSelect" onchange="changeSort()" style="margin-left: 10px; padding: 2px; background: #34495e; color: white; border: 1px solid #7f8c8d; border-radius: 3px;">
+                        <option value="desc">Сначала новые</option>
+                        <option value="asc">Сначала старые</option>
+                    </select>
+                    <input type="text" id="logFilter" placeholder="Фильтр..." style="margin-left: 10px; padding: 2px 5px; width: 120px; background: #34495e; color: white; border: 1px solid #7f8c8d; border-radius: 3px;" oninput="filterLogs()">
+                    <button onclick="clearLogs()" title="Очистить журнал" style="margin-left: 10px; padding: 2px 8px; background: #c0392b; border: none; border-radius: 3px; cursor: pointer; color: white;">🗑️</button>
+                    <button onclick="downloadLogs()" title="Скачать журнал" style="margin-left: 5px; padding: 2px 8px; background: #2980b9; border: none; border-radius: 3px; cursor: pointer; color: white;">💾</button>
+                </div>
+                <div>
+                    <button id="btnPrevPage" onclick="changePage(-1)" style="padding: 2px 8px; background: #7f8c8d; font-size: 0.9em;">&lt;</button>
+                    <span id="logPageDisplay" style="margin: 0 8px;">1</span>
+                    <button id="btnNextPage" onclick="changePage(1)" style="padding: 2px 8px; background: #7f8c8d; font-size: 0.9em;">&gt;</button>
+                </div>
+            </div>
+            <div id="logContent" style="max-height: 400px; overflow-y: auto; font-family: 'Consolas', monospace; font-size: 0.9em;"></div>
         </div>
     </div>
 
     <script>
         const totalPoints = 60;
         const writeIndex = 48; // Точка записи данных (80% от ширины)
+
+        // Плагин для отрисовки вертикальной линии
+        const verticalLinePlugin = {
+            id: 'verticalLine',
+            afterDraw: (chart) => {
+                const ctx = chart.ctx;
+                const yAxis = chart.scales.y;
+                const meta = chart.getDatasetMeta(0);
+                const point = meta.data[writeIndex];
+                const x = point.x;
+                const y = point.y;
+                
+                ctx.save();
+                ctx.beginPath();
+                ctx.moveTo(x, yAxis.top);
+                ctx.lineTo(x, yAxis.bottom);
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = 'rgba(231, 76, 60, 0.5)'; // Красный пунктир
+                ctx.setLineDash([5, 5]);
+                ctx.stroke();
+
+                const value = chart.data.datasets[0].data[writeIndex];
+                if (value !== null && value !== undefined) {
+                    ctx.font = 'bold 12px Segoe UI';
+                    ctx.fillStyle = '#c0392b';
+                    ctx.textAlign = 'left';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(`Давление: ${value.toFixed(2)}`, x + 5, y);
+                }
+                ctx.restore();
+            }
+        };
 
         const ctx = document.getElementById('pressureChart').getContext('2d');
         const chart = new Chart(ctx, {
@@ -62,53 +150,136 @@
             options: {
                 scales: { x: { display: false }, y: { beginAtZero: true } },
                 animation: false
-            }
+            },
+            plugins: [verticalLinePlugin]
         });
 
-        let isMonitoring = true;
-
         async function updateData() {
-            if (!isMonitoring) return;
-
             try {
                 const response = await fetch('/api/data');
                 const data = await response.json();
+
+                // Логика мигания кнопки журнала
+                if (seenLogCount === null) seenLogCount = data.logCount; // Инициализация при первом запуске
+
+                const btnLog = document.getElementById('btnLog');
+                const logContainer = document.getElementById('logContainer');
+
+                if (data.logCount > seenLogCount) {
+                    // Если есть новые логи и журнал закрыт -> мигаем
+                    if (logContainer.style.display === 'none') {
+                        btnLog.classList.add('btn-flash');
+                    } else {
+                        // Если журнал открыт, считаем, что пользователь видит новые логи
+                        seenLogCount = data.logCount;
+                        btnLog.classList.remove('btn-flash');
+                    }
+                } else if (data.logCount < seenLogCount) {
+                    // Если логи были очищены
+                    seenLogCount = data.logCount;
+                    btnLog.classList.remove('btn-flash');
+                }
 
                 // Если данные еще не получены (null), пропускаем обновление
                 if (data.pressure === null) return;
                 
                 document.getElementById('pressureValue').innerText = data.pressure.toFixed(2);
 
-                // Отображаем текущую уставку
-                if (data.setpoint !== null) document.getElementById('currentSetpoint').innerText = data.setpoint.toFixed(2);
+                // Обновляем счетчик
+                document.getElementById('goodCount').innerText = data.goodCount;
+                document.getElementById('failCount').innerText = data.failCount;
 
-                // Устанавливаем максимум оси Y равным уставке * 2
-                if (data.setpoint !== null && data.setpoint > 0) {
-                    chart.options.scales.y.max = data.setpoint * 2;
+                // Отображаем текущую уставку
+                if (data.setpoint !== null) {
+                    document.getElementById('currentSetpoint').innerText = data.setpoint.toFixed(2);
+                    // Заполняем поле ввода текущим значением при первой загрузке
+                    if (!isSetpointInitialized) {
+                        document.getElementById('setpointInput').value = data.setpoint;
+                        isSetpointInitialized = true;
+                    }
                 }
 
-                // Сдвигаем график влево (удаляем старое)
-                chart.data.labels.shift();
-                chart.data.datasets[0].data.shift();
-                // Добавляем пустое место в конец, чтобы сохранить ширину окна
-                chart.data.labels.push('');
-                chart.data.datasets[0].data.push(null);
-                // Записываем текущие данные в фиксированную позицию (80%)
-                chart.data.labels[writeIndex] = new Date().toLocaleTimeString();
-                chart.data.datasets[0].data[writeIndex] = data.pressure;
-                
-                chart.update();
+                // Обновляем индикатор статуса
+                const statusBadge = document.getElementById('statusBadge');
+                if (data.fail === 1) {
+                    document.body.classList.add('alarm-bg');
+                    statusBadge.innerText = "НЕ ГОДЕН";
+                    statusBadge.style.backgroundColor = "#c0392b"; // Темно-красный
+                } else if (data.overPressure === 1) {
+                    document.body.classList.add('alarm-bg');
+                    statusBadge.innerText = "АВАРИЯ ДАВЛЕНИЯ";
+                    statusBadge.style.backgroundColor = "#c0392b"; // Темно-красный
+                } else if (data.success === 1) {
+                    document.body.classList.remove('alarm-bg');
+                    statusBadge.innerText = "ГОДЕН";
+                    statusBadge.style.backgroundColor = "#27ae60"; // Темно-зеленый
+                } else {
+                    document.body.classList.remove('alarm-bg');
+                    if (data.start === 1) {
+                        statusBadge.innerText = "РАБОТА";
+                        statusBadge.style.backgroundColor = "#2ecc71"; // Зеленый
+                    } else if (data.stop === 1) {
+                        statusBadge.innerText = "ОСТАНОВЛЕНО";
+                        statusBadge.style.backgroundColor = "#e74c3c"; // Красный
+                    } else {
+                        statusBadge.innerText = "ГОТОВ";
+                        statusBadge.style.backgroundColor = "#95a5a6"; // Серый
+                    }
+                }
+
+                // Вывод списка ошибок
+                const errorList = document.getElementById('errorList');
+                errorList.innerHTML = ''; // Очищаем старый список
+                const errors = [];
+                if (data.setpointReached === 1) errors.push("✅ Уставка достигнута");
+                if (data.utechka === 1) errors.push("⚠️ Обнаружена утечка");
+                if (data.overPressure === 1) errors.push("⚠️ Превышение давления");
+                if (data.errDD === 1) errors.push("⚠️ Ошибка датчика давления");
+                if (data.errSetpoint === 1) errors.push("⚠️ Ошибка выхода на уставку");
+                if (data.fail === 1) errors.push("❌ Изделие не годно");
+                if (data.success === 1) errors.push("✅ Изделие годно");
+
+                errors.forEach(msg => {
+                    const div = document.createElement('div');
+                    div.className = 'error-item';
+                    // Если сообщение позитивное (начинается с ✅), красим в зеленый
+                    if (msg.includes('✅')) {
+                        div.style.backgroundColor = '#d4edda';
+                        div.style.color = '#155724';
+                        div.style.borderColor = '#c3e6cb';
+                    }
+                    div.innerText = msg;
+                    errorList.appendChild(div);
+                });
+
+                // Устанавливаем максимум оси Y равным уставке * 1.5
+                if (data.setpoint !== null && data.setpoint > 0) {
+                    chart.options.scales.y.max = data.setpoint * 1.5;
+                }
+
+                // Если статус "Годен" или "Не годен", график не обновляем (замораживаем)
+                if (data.success !== 1 && data.fail !== 1) {
+                    // Сдвигаем график влево (удаляем старое)
+                    chart.data.labels.shift();
+                    chart.data.datasets[0].data.shift();
+                    // Добавляем пустое место в конец, чтобы сохранить ширину окна
+                    chart.data.labels.push('');
+                    chart.data.datasets[0].data.push(null);
+                    // Записываем текущие данные в фиксированную позицию (80%)
+                    chart.data.labels[writeIndex] = new Date().toLocaleTimeString();
+                    chart.data.datasets[0].data[writeIndex] = data.pressure;
+                    
+                    chart.update();
+                }
             } catch (err) { console.error(err); }
         }
         setInterval(updateData, 500);
 
         async function startMonitoring() {
-            isMonitoring = true;
             await fetch('/api/start', { method: 'POST' });
         }
 
         async function stopMonitoring() {
-            isMonitoring = false;
             await fetch('/api/stop', { method: 'POST' });
         }
 
@@ -120,6 +291,139 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ value: parseFloat(val) })
             });
+        }
+
+        async function resetSystem() {
+            await fetch('/api/reset', { method: 'POST' });
+            
+            // Очистка графика (заполняем пустыми значениями)
+            chart.data.labels = new Array(totalPoints).fill('');
+            chart.data.datasets[0].data = new Array(totalPoints).fill(null);
+            chart.update();
+
+            // Сброс визуальных статусов
+            const statusBadge = document.getElementById('statusBadge');
+            statusBadge.innerText = "ГОТОВ";
+            statusBadge.style.backgroundColor = "#95a5a6";
+            document.getElementById('errorList').innerHTML = '';
+            document.body.classList.remove('alarm-bg');
+
+            // Обновляем seenLogCount, чтобы мигание не возобновилось
+            try {
+                const response = await fetch('/api/data');
+                const data = await response.json();
+                seenLogCount = data.logCount;
+            } catch (e) { }
+            // Сброс мигания кнопки журнала
+            document.getElementById('btnLog').classList.remove('btn-flash');
+        }
+
+        let logInterval = null;
+        let previousLogs = null;
+        let currentPage = 1;
+        let pageSize = 20;
+        let totalPages = 1;
+        let sortOrder = 'desc';
+        let seenLogCount = null;
+        let isSetpointInitialized = false;
+
+        async function fetchLogs() {
+            const contentDiv = document.getElementById('logContent');
+            const filter = document.getElementById('logFilter').value;
+            try {
+                const url = `/api/logs?filter=${encodeURIComponent(filter)}&page=${currentPage}&pageSize=${pageSize}&sort=${sortOrder}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                
+                // Обновляем инфо о страницах
+                document.getElementById('logTotal').innerText = data.total;
+                document.getElementById('logPageDisplay').innerText = data.page;
+                
+                totalPages = Math.ceil(data.total / pageSize) || 1;
+                
+                const btnPrev = document.getElementById('btnPrevPage');
+                const btnNext = document.getElementById('btnNextPage');
+                btnPrev.disabled = currentPage <= 1;
+                btnPrev.style.opacity = currentPage <= 1 ? "0.5" : "1";
+                btnNext.disabled = currentPage >= totalPages;
+                btnNext.style.opacity = currentPage >= totalPages ? "0.5" : "1";
+                
+                const logs = data.logs;
+
+                // Подсветка новых записей работает только на первой странице
+                if (previousLogs === null || currentPage !== 1) {
+                    contentDiv.innerHTML = logs.length > 0 ? logs.join('<br>') : 'Журнал пуст';
+                } else {
+                    const html = logs.map(line => {
+                        return !previousLogs.includes(line) ? `<span class="new-log">${line}</span>` : line;
+                    }).join('<br>');
+                    contentDiv.innerHTML = logs.length > 0 ? html : 'Журнал пуст';
+                }
+                
+                if (currentPage === 1) previousLogs = logs;
+
+            } catch (e) {
+                contentDiv.innerText = 'Ошибка загрузки логов';
+            }
+        }
+
+        function toggleLogs() {
+            const container = document.getElementById('logContainer');
+            if (container.style.display === 'none') {
+                container.style.display = 'block';
+                document.getElementById('logContent').innerHTML = 'Загрузка...';
+                previousLogs = null;
+                currentPage = 1; // Сброс на первую страницу при открытии
+                fetchLogs();
+                
+                // Сбрас мигания при открытии
+                document.getElementById('btnLog').classList.remove('btn-flash');
+                // seenLogCount обновится в следующем цикле updateData
+                
+                logInterval = setInterval(fetchLogs, 2000);
+            } else {
+                container.style.display = 'none';
+                if (logInterval) clearInterval(logInterval);
+            }
+        }
+
+        function changePage(delta) {
+            const newPage = currentPage + delta;
+            if (newPage < 1 || newPage > totalPages) return;
+            currentPage = newPage;
+            fetchLogs();
+        }
+
+        function changePageSize() {
+            pageSize = parseInt(document.getElementById('pageSizeSelect').value);
+            currentPage = 1;
+            previousLogs = null;
+            fetchLogs();
+        }
+
+        function changeSort() {
+            sortOrder = document.getElementById('sortSelect').value;
+            currentPage = 1;
+            previousLogs = null;
+            fetchLogs();
+        }
+
+        function filterLogs() {
+            currentPage = 1;
+            previousLogs = null;
+            fetchLogs();
+        }
+
+        async function clearLogs() {
+            if (confirm('Очистить журнал ошибок?')) {
+                await fetch('/api/logs/clear', { method: 'POST' });
+                previousLogs = null;
+                if (document.getElementById('logContainer').style.display !== 'none') fetchLogs();
+            }
+        }
+
+        function downloadLogs() {
+            window.location.href = '/api/logs/download';
         }
     </script>
 </body>

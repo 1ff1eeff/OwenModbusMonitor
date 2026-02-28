@@ -1,12 +1,52 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using System.IO;
+using System.Linq;
 
 namespace OwenModbusMonitor
 {
-    public class DeviceController(string ip, int port) : IDisposable
+    public class DeviceController : IDisposable
     {
-        private readonly ModbusService _modbusService = new ModbusService(ip, port);
+        private readonly ModbusService _modbusService;
+        public int GoodCount { get; private set; } = 0;
+        public int FailCount { get; private set; } = 0;
+        public int LogCount { get; private set; } = 0;
+        private const string CountersFileName = "counters.txt";
+        private const string ErrorLogFileName = "errors.log";
+
+        public DeviceController(string ip, int port)
+        {
+            _modbusService = new ModbusService(ip, port);
+            LoadCounters();
+            if (File.Exists(ErrorLogFileName)) LogCount = File.ReadLines(ErrorLogFileName).Count();
+
+            // Увеличиваем счетчик, когда Success меняется на 1
+            Success.ValueChanged += (s, val) => 
+            { 
+                if (val == 1) 
+                {
+                    GoodCount++; 
+                    SaveCounters();
+                }
+            };
+            Fail.ValueChanged += (s, val) => 
+            { 
+                if (val == 1) 
+                {
+                    FailCount++; 
+                    SaveCounters();
+                    LogError("Изделие не годно");
+                }
+            };
+
+            // Подписка на события ошибок для логирования
+            Utechka.ValueChanged += (s, val) => { if (val == 1) LogError("Обнаружена утечка"); };
+            OverPress.ValueChanged += (s, val) => { if (val == 1) LogError("Превышение давления"); };
+            ErrDD.ValueChanged += (s, val) => { if (val == 1) LogError("Ошибка датчика давления"); };
+            ErrSetpoint.ValueChanged += (s, val) => { if (val == 1) LogError("Ошибка выхода на уставку"); };
+        }
+
         private CancellationTokenSource? _cts;
         private bool _isWriting = false;
 
@@ -15,11 +55,11 @@ namespace OwenModbusMonitor
         private const int Addr_Stop = 16385;
         private const int Addr_Ustavka = 16386;
         private const int Addr_Davlenie = 16388;
-        private const int Addr_StopMaxSet = 16390;
+        private const int Addr_SetpointReached = 16390;
         private const int Addr_Utechka = 16391;
         private const int Addr_OverPress = 16392;
         private const int Addr_ErrDD = 16393;
-        private const int Addr_Err = 16394;
+        private const int Addr_ErrSetpoint = 16394;
         private const int Addr_Success = 16395;
         private const int Addr_Fail = 16396;
 
@@ -33,11 +73,11 @@ namespace OwenModbusMonitor
         // Дискретные (Short)
         public MonitoredShort StartVar { get; } = new MonitoredShort();
         public MonitoredShort StopVar { get; } = new MonitoredShort();
-        public MonitoredShort StopMaxSet { get; } = new MonitoredShort();
+        public MonitoredShort SetpointReached { get; } = new MonitoredShort();
         public MonitoredShort Utechka { get; } = new MonitoredShort();
         public MonitoredShort OverPress { get; } = new MonitoredShort();
         public MonitoredShort ErrDD { get; } = new MonitoredShort();
-        public MonitoredShort Err { get; } = new MonitoredShort();
+        public MonitoredShort ErrSetpoint { get; } = new MonitoredShort();
         public MonitoredShort Success { get; } = new MonitoredShort();
         public MonitoredShort Fail { get; } = new MonitoredShort();
 
@@ -84,11 +124,11 @@ namespace OwenModbusMonitor
                     Ustavka.CurrentValue = ParseFloat(data, Addr_Ustavka - Addr_Start);
                     Davlenie.CurrentValue = ParseFloat(data, Addr_Davlenie - Addr_Start);
 
-                    StopMaxSet.CurrentValue = data[Addr_StopMaxSet - Addr_Start];
+                    SetpointReached.CurrentValue = data[Addr_SetpointReached - Addr_Start];
                     Utechka.CurrentValue = data[Addr_Utechka - Addr_Start];
                     OverPress.CurrentValue = data[Addr_OverPress - Addr_Start];
                     ErrDD.CurrentValue = data[Addr_ErrDD - Addr_Start];
-                    Err.CurrentValue = data[Addr_Err - Addr_Start];
+                    ErrSetpoint.CurrentValue = data[Addr_ErrSetpoint - Addr_Start];
                     Success.CurrentValue = data[Addr_Success - Addr_Start];
                     Fail.CurrentValue = data[Addr_Fail - Addr_Start];
                 }
@@ -150,6 +190,20 @@ namespace OwenModbusMonitor
             finally { _isWriting = false; }
         }
 
+        public async Task ResetStatusAsync()
+        {
+            GoodCount = 0; // Сбрасываем счетчик
+            FailCount = 0;
+            SaveCounters();
+            _isWriting = true;
+            try
+            {
+                await _modbusService.WriteShortAsync(UnitId, Addr_Start, 0);
+                await _modbusService.WriteShortAsync(UnitId, Addr_Stop, 0);
+            }
+            finally { _isWriting = false; }
+        }
+
         public async Task ResetAllAsync()
         {
             if (_modbusService.IsConnected)
@@ -159,6 +213,53 @@ namespace OwenModbusMonitor
                 await _modbusService.WriteFloatAsync(UnitId, Addr_Ustavka, 0);
                 // Дополнительные сбросы можно добавить здесь
             }
+        }
+
+        private void LoadCounters()
+        {
+            try
+            {
+                if (File.Exists(CountersFileName))
+                {
+                    var lines = File.ReadAllLines(CountersFileName);
+                    if (lines.Length >= 2)
+                    {
+                        if (int.TryParse(lines[0], out int good)) GoodCount = good;
+                        if (int.TryParse(lines[1], out int fail)) FailCount = fail;
+                    }
+                }
+            }
+            catch { /* Игнорируем ошибки чтения */ }
+        }
+
+        private void SaveCounters()
+        {
+            try
+            {
+                File.WriteAllLines(CountersFileName, new[] { GoodCount.ToString(), FailCount.ToString() });
+            }
+            catch { /* Игнорируем ошибки записи */ }
+        }
+
+        private void LogError(string message)
+        {
+            try
+            {
+                string logEntry = $"{DateTime.Now}: {message}";
+                File.AppendAllText(ErrorLogFileName, logEntry + Environment.NewLine);
+                LogCount++;
+            }
+            catch { /* Игнорируем ошибки записи лога */ }
+        }
+
+        public void ClearLogs()
+        {
+            try
+            {
+                File.WriteAllText(ErrorLogFileName, string.Empty);
+                LogCount = 0;
+            }
+            catch { /* Игнорируем ошибки */ }
         }
 
         public void Dispose()
