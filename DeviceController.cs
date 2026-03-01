@@ -12,6 +12,7 @@ namespace OwenModbusMonitor
         public int GoodCount { get; private set; } = 0;
         public int FailCount { get; private set; } = 0;
         public int LogCount { get; private set; } = 0;
+        public DateTime? ConnectionLostTime { get; private set; }
         private const string CountersFileName = "counters.txt";
         private const string ErrorLogFileName = "errors.log";
 
@@ -104,10 +105,17 @@ namespace OwenModbusMonitor
         {
             while (!token.IsCancellationRequested)
             {
-                if (!_modbusService.IsConnected || _isWriting)
+                if (_isWriting)
                 {
                     await Task.Delay(200, token);
                     continue;
+                }
+
+                if (!_modbusService.IsConnected)
+                {
+                    if (ConnectionLostTime == null) ConnectionLostTime = DateTime.Now;
+                    try { _modbusService.Connect(); ConnectionLostTime = null; }
+                    catch { await Task.Delay(1000, token); continue; }
                 }
 
                 try
@@ -115,6 +123,7 @@ namespace OwenModbusMonitor
                     // Чтение блока данных (13 регистров) для оптимизации
                     // Читаем всё сразу от Addr_Start до Addr_Fail одним запросом
                     var data = await _modbusService.ReadBlockAsync(UnitId, Addr_Start, 13);
+                    ConnectionLostTime = null;
 
                     // Разбор данных (индексы смещены относительно Addr_Start)
                     StartVar.CurrentValue = data[Addr_Start - Addr_Start];
@@ -135,6 +144,8 @@ namespace OwenModbusMonitor
                 catch (Exception ex)
                 {
                     System.Diagnostics.Debug.WriteLine($"Ошибка Modbus: {ex.Message}");
+                    _modbusService.Disconnect();
+                    if (ConnectionLostTime == null) ConnectionLostTime = DateTime.Now;
                 }
 
                 await Task.Delay(100, token);

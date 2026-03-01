@@ -20,7 +20,6 @@ builder.WebHost.ConfigureKestrel(options => options.ListenAnyIP(5000));
 builder.Services.AddSingleton<DeviceController>(sp =>
 {
     var controller = new DeviceController("127.0.0.1", 502);
-    controller.Connect();
     controller.StartMonitoring();
     return controller;
 });
@@ -34,6 +33,8 @@ app.MapGet("/api/data", (DeviceController device) =>
 {
     return new
     {
+        isConnected = device.IsConnected,
+        waitingSeconds = device.ConnectionLostTime.HasValue ? (int)(DateTime.Now - device.ConnectionLostTime.Value).TotalSeconds : 0,
         pressure = device.Davlenie.HasValue ? device.Davlenie.CurrentValue : (float?)null,
         setpoint = device.Ustavka.HasValue ? device.Ustavka.CurrentValue : (float?)null,
         start = device.StartVar.CurrentValue,

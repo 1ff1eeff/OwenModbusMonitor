@@ -26,29 +26,9 @@
         @keyframes flash-log { 0% { background-color: #e67e22; } 100% { background-color: transparent; } }
         @keyframes flash-button { 0% { background-color: #34495e; } 50% { background-color: #e67e22; } 100% { background-color: #34495e; } }
         .btn-flash { animation: flash-button 1s infinite; }
-        
-        /* Оверлей ожидания */
-        #overlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.85); color: white;
-            display: none; flex-direction: column; justify-content: center; align-items: center;
-            z-index: 1000; backdrop-filter: blur(3px);
-        }
-        .spinner {
-            width: 50px; height: 50px; border: 5px solid #f3f3f3; border-top: 5px solid #3498db;
-            border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 20px;
-        }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
-    <!-- Оверлей -->
-    <div id="overlay">
-        <div class="spinner"></div>
-        <h1>Ожидание устройства . . .</h1>
-        <p>Время ожидания: <span id="timer">0</span> сек.</p>
-    </div>
-
     <div class="container">
         <div class="sensor-card">
             <h2>Датчик Давления</h2>
@@ -84,7 +64,6 @@
                 <button class="btn-stop" onclick="stopMonitoring()">Стоп</button>
                 <button class="btn-reset" onclick="resetSystem()">Сброс</button>
                 <button id="btnLog" class="btn-log" onclick="toggleLogs()">Журнал</button>
-                <button onclick="exportChartData()" style="background-color: #8e44ad;">Экспорт графика</button>
             </div>
         </div>
         <div id="errorList" class="error-list"></div>
@@ -165,7 +144,7 @@
                     backgroundColor: 'rgba(52, 152, 219, 0.2)',
                     fill: true,
                     tension: 0.3,
-                    spanGaps: false
+                    spanGaps: true
                 }]
             },
             options: {
@@ -179,25 +158,6 @@
             try {
                 const response = await fetch('/api/data');
                 const data = await response.json();
-
-                const overlay = document.getElementById('overlay');
-                
-                // Логика оверлея: если нет связи, показываем экран ожидания
-                if (!data.isConnected) {
-                    overlay.style.display = 'flex';
-                    document.getElementById('timer').innerText = data.waitingSeconds;
-                    
-                    // Сдвигаем график (создаем разрыв)
-                    chart.data.labels.shift();
-                    chart.data.datasets[0].data.shift();
-                    chart.data.labels.push('');
-                    chart.data.datasets[0].data.push(null);
-                    chart.update();
-                    
-                    return; // Прерываем обновление остальных данных
-                } else {
-                    overlay.style.display = 'none';
-                }
 
                 // Логика мигания кнопки журнала
                 if (seenLogCount === null) seenLogCount = data.logCount; // Инициализация при первом запуске
@@ -306,24 +266,12 @@
                     chart.data.labels.push('');
                     chart.data.datasets[0].data.push(null);
                     // Записываем текущие данные в фиксированную позицию (80%)
-                    chart.data.labels[writeIndex] = new Date().toLocaleString('ru-RU');
+                    chart.data.labels[writeIndex] = new Date().toLocaleTimeString();
                     chart.data.datasets[0].data[writeIndex] = data.pressure;
                     
                     chart.update();
                 }
-            } catch (err) { 
-                console.error(err);
-                // Если сервер не отвечает (ошибка сети)
-                document.getElementById('overlay').style.display = 'flex';
-                document.getElementById('timer').innerText = "Ошибка сети";
-
-                // Сдвигаем график (создаем разрыв)
-                chart.data.labels.shift();
-                chart.data.datasets[0].data.shift();
-                chart.data.labels.push('');
-                chart.data.datasets[0].data.push(null);
-                chart.update();
-            }
+            } catch (err) { console.error(err); }
         }
         setInterval(updateData, 500);
 
@@ -476,34 +424,6 @@
 
         function downloadLogs() {
             window.location.href = '/api/logs/download';
-        }
-
-        function exportChartData() {
-            const labels = chart.data.labels;
-            const data = chart.data.datasets[0].data;
-            
-            // Формируем заголовок CSV (разделитель точка с запятой для Excel в RU локали)
-            let csvContent = "Дата и Время;Давление (бар)\n";
-
-            // Проходим по всем точкам графика
-            for (let i = 0; i < labels.length; i++) {
-                // Сохраняем только точки, где есть время (игнорируем пустые слоты инициализации)
-                if (labels[i]) {
-                    // Заменяем точку на запятую для корректного открытия в русском Excel
-                    let val = data[i] !== null ? data[i].toString().replace('.', ',') : "";
-                    csvContent += `${labels[i]};${val}\n`;
-                }
-            }
-
-            // Создаем Blob и ссылку для скачивания
-            const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
-            const link = document.createElement("a");
-            link.href = URL.createObjectURL(blob);
-            const now = new Date();
-            const dateStr = now.toLocaleDateString('ru-RU').replace(/\./g, '-');
-            const timeStr = now.toLocaleTimeString('ru-RU').replace(/:/g, '-');
-            link.download = `chart_export_${dateStr}_${timeStr}.csv`;
-            link.click();
         }
     </script>
 </body>
